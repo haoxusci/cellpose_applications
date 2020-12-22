@@ -1,0 +1,2 @@
+cellpose==0.6
+scikit-image
