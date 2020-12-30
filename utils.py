@@ -124,11 +124,12 @@ def quantify_fov(img, mask):
         cell_in_img = img[cell_mask_bool]
         # get signal integration
         cell_integ = np.sum(cell_in_img)
+        cell_mean = np.mean(cell_in_img)
         
         #current_cell_info['cell_size'] = cell_size
         #current_cell_info['cell_integ'] = cell_integ
         fov_quantify.append(
-            (cell_idx, cell_size, cell_integ)
+            (cell_idx, cell_size, cell_integ, cell_mean)
         )
         
     return fov_quantify
