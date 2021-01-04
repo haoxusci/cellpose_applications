@@ -3,7 +3,9 @@ from glob import glob
 import imageio
 import numpy as np
 import pandas as pd
+from imageio import imread
 from matplotlib import pyplot as plt
+from skimage import segmentation, morphology, exposure
 from utils import segment_imgs, read_to_rgb, quantify_fov
 
 CHS_MAPPING = {
@@ -137,11 +139,11 @@ def quantify_all_fovs(image_folder, processed_folder=None, save_mask=True, quant
 
             # write data to list, and then to csv file
             for cell_data in fov_quantify:
-                cell_idx, cell_size, cell_integ, cell_mean = cell_data
+                cell_idx, cell_size, cell_integ, cell_mean, last4percentmean = cell_data
 
                 cell_info = {}
                 cell_info['well_id'] = well_id
-                cell_info['well_fovs'] = well_fov
+                cell_info['well_fov'] = well_fov
                 cell_info['nuclei_file'] = fov_chs_files['nuclei']
                 cell_info['er_file'] = fov_chs_files['er']
                 cell_info['virus_file'] = fov_chs_files['virus']
@@ -151,6 +153,7 @@ def quantify_all_fovs(image_folder, processed_folder=None, save_mask=True, quant
                 cell_info['cell_size'] = cell_size
                 cell_info['cell_integ'] = cell_integ
                 cell_info['cell_mean'] = cell_mean
+                cell_info['last4percentmean'] = last4percentmean
                 # append the data to fov_data_output
                 fov_data_output.append(cell_info)
             # save the data from each fov to csv file
@@ -194,3 +197,99 @@ def combine_all_quantify(processed_folder, combine_file=True):
         )
     else:
         return df
+
+
+def adjust_image(img):
+    """Adjust image intensity for better visualization.
+    Args:
+        img (numpy array): image array of 3d, e.g., (1080, 1080, 3)
+    
+    Returns:
+        numpy array: image array of 3d after intensity adjustment.
+    """
+    #img = np.stack([image['red'], image['green'], image['blue']], axis=2)
+    #img = img/img.max(axis=(0,1))
+    #img = rescale(img, 0.5, anti_aliasing=True)
+    dtype = img.dtype
+    p2, p99 = np.percentile(img, (0, 99.9))
+    img = exposure.rescale_intensity(img, in_range=(p2, p99))
+    img = img.astype(dtype)
+    
+    return img
+
+
+def add_contours(mask_img, img, ch):
+    """Add contours on img on a rgb image.
+    Args:
+        mask_image (numpy array): 2d image array, with each cell being attributed with one unique value.
+        img (numpy array): 3d image array, rgb image.
+        ch (int): designate the channel index that shows the cell contours.
+        
+    Returns:
+        numpy array: image array with cell contours being added onto the image.
+    """
+    max_value = img.max()
+    dtype = img.dtype
+    
+    cell_contours = segmentation.find_boundaries(mask_img)
+    cell_contours = morphology.binary_dilation(
+        cell_contours, selem=np.full((2, 2), 1)
+    )
+    cell_contours_invert = np.invert(cell_contours)
+    img_ch = img[:,:,ch]
+    img_ch = img_ch * cell_contours_invert
+    img_ch = img_ch.astype(dtype)
+    #print(img.dtype)
+    contours = mask_img.astype(dtype) * max_value
+    img[:,:,ch] = img_ch + contours
+    
+    return img
+
+
+def select_cells(mask_image, cell_indice):
+    """get boolean mask for seleted cells.
+    Args:
+        mask_image (numpy array): 2d image array, with each cell being attributed with one unique value.
+        cell_indice (list): list of values that indicates the cells to be retain.
+        
+    Returns:
+        numpy array: mask of boolean values for selected cells.
+    """
+    dtype = mask_image.dtype
+    mask_selected = np.full_like(mask_image, 0, dtype=dtype)
+    for i, cell in enumerate(cell_indice):
+        cell_mask = mask_image * (mask_image == cell)
+        mask_selected = np.where(mask_selected > cell_mask, mask_selected, cell_mask)
+    
+    return mask_selected
+
+def show_infections(df, well_fov, dim_er=False):
+    """Show cell infections.
+    Args:
+        df (pandas DataFrame): pandas dataframe with infected cells indicated.
+        well_fov (str): well fov info
+        
+    Returns:
+        numpy array: image array with infected and noninfected cells marked.
+    """
+    infected_cells = df.loc[(df.well_fov==well_fov) & (df.Infected==1)].cell_idx.to_list()
+    noninfected_cells = df.loc[(df.well_fov==well_fov) & (df.Infected==0)].cell_idx.to_list()
+    
+    fov_example = df.loc[df.well_fov==well_fov].iloc[0]
+    
+    nuclei_image = imread(fov_example.nuclei_file)
+    er_image = imread(fov_example.er_file)
+    virus_image = imread(fov_example.virus_file)
+    mask_image = imread(fov_example.mask_file)
+    
+    img = np.stack([virus_image, er_image, nuclei_image], axis=2)
+    img = adjust_image(img)
+    if dim_er:
+        img[:,:,1] = img[:,:,1]//1.5
+
+    mask_infected = select_cells(mask_image, infected_cells)
+    mask_noninfected = select_cells(mask_image, noninfected_cells)
+    img = add_contours(mask_infected, img, ch=0)
+    img = add_contours(mask_noninfected, img, ch=2)
+    
+    return img
