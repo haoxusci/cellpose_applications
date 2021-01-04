@@ -56,14 +56,14 @@ def segment_imgs(imgs, channels, model_type="cyto"):
 def read_to_rgb(fov_chs_files):
     """
     Read image files to rgb img array.
-    
+
     Args:
         fov_chs_files (dict): a dict speicifying the image path for each channel
-        
-    
+
+
     Returns:
         list: return rgb image array and channel of list stating the cytoplasm and nuclei channel settings
-    
+
     Example:
         fov_chs_files = {
             'nuclei': '/home/haoxu/data/test_data_20201218/40x/r08c22f01p01-ch1sk1fk1fl1.tiff',
@@ -74,50 +74,45 @@ def read_to_rgb(fov_chs_files):
     fov_chs_imgs = {}
     for key, file in fov_chs_files.items():
         fov_chs_imgs[key] = imageio.imread(file)
-        #print(key, item)
+        # print(key, item)
     fov_chs_rgb = np.array(
-        [
-            fov_chs_imgs['virus'],
-            fov_chs_imgs['er'],
-            fov_chs_imgs['nuclei']
-        ]
+        [fov_chs_imgs["virus"], fov_chs_imgs["er"], fov_chs_imgs["nuclei"]]
     )
     fov_chs_rgb = np.transpose(fov_chs_rgb, (1, 2, 0))
     channel = [2, 3]
 
     return fov_chs_rgb, channel
 
+
 def quantify_fov(img, mask):
     """
     Quantify virus img signal by using mask files
-    
+
     Args:
         img (numpy array): 2D image array to be quantified.
         mask (numpy array): 2D image array with each cell being deassignated with a unique number.
-        
+
     Returns:
         list: list of quantification for single cell.
               Speicifically, it follows this pattern-(cell_idx, cell_size, cell_integ)
     """
-    if not mask.dtype == 'uint16':
-        mask = mask.astype('uint16')
+    if not mask.dtype == "uint16":
+        mask = mask.astype("uint16")
     cell_indexes = np.unique(mask)
-    
+
     # create an empty list to host data
     fov_quantify = []
 
     if len(cell_indexes) < 2:
-        print('No cells segmentated!')
+        print("No cells segmentated!")
         return
-    
+
     for cell_idx in cell_indexes:
         if cell_idx == 0:
             continue
         current_cell_info = {}
-        
-        cell_mask_bool = (
-                    mask == cell_idx
-                )
+
+        cell_mask_bool = mask == cell_idx
         # get cell size
         cell_size = np.count_nonzero(cell_mask_bool)
         # retain selected cells in the img
@@ -127,19 +122,13 @@ def quantify_fov(img, mask):
         cell_mean = np.mean(cell_in_img)
         array_size = cell_in_img.size
         last4percentmean = np.mean(
-            cell_in_img[
-                np.argsort(cell_in_img)[
-                    int(array_size * 0.96) :
-                ]
-            ]
-        ).astype(
-            int
-        )
-        
-        #current_cell_info['cell_size'] = cell_size
-        #current_cell_info['cell_integ'] = cell_integ
+            cell_in_img[np.argsort(cell_in_img)[int(array_size * 0.96) :]]
+        ).astype(int)
+
+        # current_cell_info['cell_size'] = cell_size
+        # current_cell_info['cell_integ'] = cell_integ
         fov_quantify.append(
             (cell_idx, cell_size, cell_integ, cell_mean, last4percentmean)
         )
-        
+
     return fov_quantify
