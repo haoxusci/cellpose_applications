@@ -105,7 +105,7 @@ def quantify_fov(img, mask):
 
     if len(cell_indexes) < 2:
         print("No cells segmentated!")
-        return
+        return fov_quantify
 
     for cell_idx in cell_indexes:
         if cell_idx == 0:
