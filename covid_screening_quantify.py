@@ -5,10 +5,11 @@ import numpy as np
 import pandas as pd
 from imageio import imread
 from matplotlib import pyplot as plt
+import seaborn as sns
 from skimage import segmentation, morphology, exposure
 from utils import segment_imgs, read_to_rgb, quantify_fov
 
-CHS_MAPPING = {"nuclei": "ch1", "er": "ch2", "virus": "ch3"}
+CHS_MAPPING = {"nuclei": "ch1", "er": "ch3", "virus": "ch2"}
 
 
 def sort_wells_fovs(image_folder):
@@ -207,7 +208,7 @@ def combine_all_quantify(processed_folder, combine_file=True):
     df = pd.concat(dfs)
     if combine_file:
         df.to_csv(
-            "/home/haoxu/data/test_data_20201218/40x_processed/quantify_all.csv",
+            os.path.join(processed_folder, "quantify_all.csv"),
             index=False,
         )
     else:
@@ -281,15 +282,18 @@ def select_cells(mask_image, cell_indice):
     return mask_selected
 
 
-def show_infections(df, well_fov, dim_er=False):
+def show_infections(df, well_fov, dim_er=False, contour=True, show_er=True):
     """Show cell infections.
     Args:
         df (pandas DataFrame): pandas dataframe with infected cells indicated.
-        well_fov (str): well fov info
+        well_fov (str): well fov info.
 
     Returns:
         numpy array: image array with infected and noninfected cells marked.
     """
+    cell_examples = df.loc[df.well_fov == well_fov]
+    if not len(cell_examples):
+        raise Exception("No cell sample found, try a different fov!")
     infected_cells = df.loc[
         (df.well_fov == well_fov) & (df.Infected == 1)
     ].cell_idx.to_list()
@@ -300,18 +304,148 @@ def show_infections(df, well_fov, dim_er=False):
     fov_example = df.loc[df.well_fov == well_fov].iloc[0]
 
     nuclei_image = imread(fov_example.nuclei_file)
-    er_image = imread(fov_example.er_file)
+    if not show_er:
+        er_image = np.full_like(nuclei_image, 0)
+    else:
+        er_image = imread(fov_example.er_file)
     virus_image = imread(fov_example.virus_file)
-    mask_image = imread(fov_example.mask_file)
 
     img = np.stack([virus_image, er_image, nuclei_image], axis=2)
     img = adjust_image(img)
-    if dim_er:
+    if dim_er and show_er:
         img[:, :, 1] = img[:, :, 1] // 1.5
-
+    if not contour:
+        return img
+    mask_image = imread(fov_example.mask_file)
     mask_infected = select_cells(mask_image, infected_cells)
     mask_noninfected = select_cells(mask_image, noninfected_cells)
     img = add_contours(mask_infected, img, ch=0)
     img = add_contours(mask_noninfected, img, ch=2)
 
     return img
+
+
+def calc_infection(df, df_well_ids, well_id):
+    """Calculate the infection rate for each well.
+    Args:
+        df (pandas DataFrame): pandas dataframe with infected cells indicated.
+        df_well_ids (list): available well_ids in df dataframe.
+        well_id (str): well id info.
+    
+    Returns:
+        dict: cell_count, infected_cell_count, infection_rate.
+    """
+    if not well_id in df_well_ids:
+        #print(f"there is no cell detected in {well_id}")
+        # if no cells found, give infection rate as -50
+        return {
+            'cell_count': 0,
+            'infected_cell_count': 0,
+            'infection_rate': -50
+        }
+    else:
+        well_cells = df.loc[df.well_id == well_id]
+        cell_count = len(well_cells)
+        infected_cell_count = len(well_cells.loc[well_cells.Infected == 1])
+        infection_rate = round(infected_cell_count / cell_count *100, 2)
+
+        return {
+            'cell_count': cell_count,
+            'infected_cell_count': infected_cell_count,
+            'infection_rate': infection_rate
+        }
+    
+
+def plate_infection(processed_folder, infection_threshold=3000):
+    """Calculate all the infection rate in the plate.
+    Args:
+        processed_folder (str): the path of processed folder.
+        infection_threshold (int): threshold value for cell infection.
+    
+    Returns:
+        dict: cell infection numbers
+    """
+    df = pd.read_csv(
+        os.path.join(
+            processed_folder,
+            'quantify_all.csv'
+        )
+    )
+    # define if cell is infected
+    df  = df.assign(**dict.fromkeys(["Infected"], 0))
+    df.loc[df.last4percentmean > infection_threshold, 'Infected'] = 1
+    
+    df_well_ids = df.well_id.to_list()
+    df_well_ids.sort()
+    df_well_ids = set(df_well_ids)
+
+    row_number = 16
+    column_number = 24
+
+    cell_counts = []
+    infected_cell_counts = []
+    infection_rates = []
+    for row in range(1, row_number + 1):
+        for column in range(1, column_number + 1):
+            well_id = f"r{row:02d}c{column:02d}"
+            infection_info = calc_infection(df, df_well_ids, well_id)
+            cell_count, infected_cell_count, infection_rate = infection_info['cell_count'], infection_info['infected_cell_count'], infection_info['infection_rate']
+            
+            cell_counts.append(cell_count)
+            infected_cell_counts.append(infected_cell_count)
+            infection_rates.append(infection_rate)
+    cell_counts = np.array(cell_counts)
+    cell_counts = cell_counts.reshape((row_number, column_number))
+    infected_cell_counts = np.array(infected_cell_counts)
+    infected_cell_counts = infected_cell_counts.reshape((row_number, column_number))
+    infection_rates = np.array(infection_rates)
+    infection_rates = infection_rates.reshape((row_number, column_number))
+    
+    return {
+        'row_number': row_number,
+        'column_number': column_number,
+        'cell_counts': cell_counts,
+        'infected_cell_counts': infected_cell_counts,
+        'infection_rates': infection_rates
+    }
+
+
+def plate_plots(processed_folder, infection_threshold=3000):
+    """Plot cell counts, infected cell counts, infection rates for a plate of processed folder
+    Args:
+        processed_folder (str): the path of processed folder.
+        infection_threshold (int): threshold value for cell infection.        
+    """
+    infection_data = plate_infection(processed_folder, infection_threshold)
+    sns.set_theme()
+    data = infection_data['infection_rates']
+    mask = np.zeros_like(data)
+    mask = np.where(data >= 0, mask, True)
+    
+    xticklabels = [str(i) for i in range(1, 1 + infection_data['column_number'])]
+    yticklabels = 'abcdefghijklmnop'[:infection_data['row_number']].upper()
+    yticklabels = list(yticklabels)
+    for item in infection_data.keys():
+        if item in ['row_number', 'column_number']:
+            continue
+        legend_label = item.replace('_', ' ')
+        if 'rate' in item:
+            legend_label += ' (%)' 
+            #vmax = 100
+        #else:
+            #vmax=None
+        plt.figure(figsize=(15, 15))
+        sns.heatmap(
+            infection_data[item],
+            vmin=0,
+            vmax=None,
+            center=0,
+            linewidths=.5,
+            square=True,
+            xticklabels=xticklabels,
+            yticklabels=yticklabels,
+            mask=mask,
+            cbar_kws={'label': legend_label, "shrink": .5}
+        )
+        plt.yticks(rotation=0)
+        plt.savefig(os.path.join(processed_folder, item + '.png'), dpi=100)
