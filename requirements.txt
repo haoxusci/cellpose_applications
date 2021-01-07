@@ -3,3 +3,5 @@ scikit-image
 voluptuous
 pandas
 seaborn
+openpyxl
+xlrd

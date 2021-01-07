@@ -215,6 +215,34 @@ def combine_all_quantify(processed_folder, combine_file=True):
         return df
 
 
+def write_conditions(quantify_csv_file, condition_xlsx_file):
+    """write conditions to quantify_all_file.
+    Args:
+        quantify_csv_file (str): quantify csv file path.
+        condition_xlsx_file (str): conditions xlsx file path.
+    """
+    df = pd.read_csv(quantify_csv_file)
+    # get the conditions
+    conditions_data = pd.read_excel(condition_xlsx_file)
+    letters = 'abcdefghijklmnop'.upper()
+    
+    df  = df.assign(**dict.fromkeys(["Compound"], np.nan))
+    for item in conditions_data['Destination Well']:
+        row = letters.index(item[0]) + 1
+        column = int(item[1:])
+        well_id = f"r{row:02d}c{column:02d}"
+        condition_rows = conditions_data.loc[conditions_data['Destination Well'] == item]
+        if len(condition_rows):
+            try:
+                condition = condition_rows.iloc[0].Compound
+                df.loc[df.well_id == well_id, 'Compound'] = condition
+            except:
+                print(item)
+                print(condition_rows)
+    # save again the file
+    df.to_csv(quantify_csv_file, index=False)
+
+    
 def adjust_image(img):
     """Adjust image intensity for better visualization.
     Args:
@@ -448,4 +476,44 @@ def plate_plots(processed_folder, infection_threshold=3000):
             cbar_kws={'label': legend_label, "shrink": .5}
         )
         plt.yticks(rotation=0)
-        plt.savefig(os.path.join(processed_folder, item + '.png'), dpi=100)
+        plot_folder = os.path.join(processed_folder, 'plots')
+        os.makedirs(plot_folder, exist_ok=True)
+        plt.savefig(os.path.join(plot_folder, item + '_plate_map.png'), bbox_inches='tight', dpi=100)
+    
+    ## scatter plots
+    df = pd.read_csv(
+        os.path.join(
+            processed_folder,
+            'quantify_all.csv'
+        )
+    )
+    compounds = list(set(df.Compound.to_list()))
+    df_compounds = pd.DataFrame
+    calculate_items = ['cell_counts', 'infected_cell_counts', 'infection_rates']
+    compounds_infections = []
+    for compound in compounds:
+        wells_selected = list(set(df.loc[df.Compound == compound].well_id))
+        for well_selected in wells_selected:
+            compound_infection = {}
+            row_index = int(well_selected[1:3]) - 1
+            column_index = int(well_selected[4:]) - 1
+            compound_infection['well_id'] = well_selected
+            for _, calculate_item in enumerate(calculate_items):
+                compound_infection[calculate_item] = infection_data[calculate_item][row_index][column_index]
+            compound_infection['Compound'] = compound
+            compounds_infections.append(compound_infection)
+
+    df2 = pd.DataFrame(compounds_infections)
+    df2.to_csv(
+        os.path.join(
+        processed_folder,
+        'infection_data.csv'
+        )
+    )
+    sns.set_theme(style="ticks", color_codes=True)
+    
+    for _, calculate_item in enumerate(calculate_items):
+        plt.figure(figsize=(10, 20))
+        sns.catplot(x="Compound", y=calculate_item, kind="swarm", data=df2, aspect=2)
+        plt.xticks(rotation=45)
+        plt.savefig(os.path.join(plot_folder, calculate_item + '_bbox.png'), bbox_inches='tight', dpi=100)
