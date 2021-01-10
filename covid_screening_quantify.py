@@ -284,7 +284,7 @@ def add_contours(mask_img, img, ch):
     img_ch = img_ch * cell_contours_invert
     img_ch = img_ch.astype(dtype)
     # print(img.dtype)
-    contours = mask_img.astype(dtype) * max_value
+    contours = cell_contours.astype(dtype) * max_value
     img[:, :, ch] = img_ch + contours
 
     return img
