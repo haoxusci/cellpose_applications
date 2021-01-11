@@ -514,6 +514,10 @@ def plate_plots(processed_folder, infection_threshold=3000):
     
     for _, calculate_item in enumerate(calculate_items):
         plt.figure(figsize=(10, 20))
-        sns.catplot(x="Compound", y=calculate_item, kind="swarm", data=df2, aspect=2)
+        sns.catplot(x="Compound", y=calculate_item, kind="box", data=df2, aspect=2)
         plt.xticks(rotation=45)
+        ylabel = calculate_item.replace('_', ' ')
+        if ylabel == 'infection rates':
+            ylabel = 'infection rates (%)'
+        plt.ylabel(ylabel)
         plt.savefig(os.path.join(plot_folder, calculate_item + '_bbox.png'), bbox_inches='tight', dpi=100)
