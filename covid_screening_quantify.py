@@ -506,9 +506,10 @@ def plate_plots(processed_folder, infection_threshold=3000):
     df2 = pd.DataFrame(compounds_infections)
     df2.to_csv(
         os.path.join(
-        processed_folder,
-        'infection_data.csv'
-        )
+            processed_folder,
+            'infection_data.csv'
+        ),
+        index=False
     )
     sns.set_theme(style="ticks", color_codes=True)
     
