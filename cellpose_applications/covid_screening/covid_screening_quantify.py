@@ -7,7 +7,7 @@ from imageio import imread
 from matplotlib import pyplot as plt
 import seaborn as sns
 from skimage import segmentation, morphology, exposure
-from utils import segment_imgs, read_to_rgb, quantify_fov
+from cellpose_applications.utils import segment_imgs, read_to_rgb
 
 CHS_MAPPING = {"nuclei": "ch1", "er": "ch3", "virus": "ch2"}
 
@@ -39,6 +39,56 @@ def sort_wells_fovs(image_folder):
     wells.sort()
 
     return wells, fovs, files
+
+
+def quantify_fov(img, mask):
+    """
+    Quantify virus img signal by using mask files
+
+    Args:
+        img (numpy array): 2D image array to be quantified.
+        mask (numpy array): 2D image array with each cell being deassignated with a unique number.
+
+    Returns:
+        list: list of quantification for single cell.
+              Speicifically, it follows this pattern-(cell_idx, cell_size, cell_integ)
+    """
+    if not mask.dtype == "uint16":
+        mask = mask.astype("uint16")
+    cell_indexes = np.unique(mask)
+
+    # create an empty list to host data
+    fov_quantify = []
+
+    if len(cell_indexes) < 2:
+        print("No cells segmentated!")
+        return fov_quantify
+
+    for cell_idx in cell_indexes:
+        if cell_idx == 0:
+            continue
+        current_cell_info = {}
+
+        cell_mask_bool = mask == cell_idx
+        # get cell size
+        cell_size = np.count_nonzero(cell_mask_bool)
+        # retain selected cells in the img
+        cell_in_img = img[cell_mask_bool]
+        # get signal integration
+        cell_integ = np.sum(cell_in_img)
+        cell_mean = np.mean(cell_in_img)
+        array_size = cell_in_img.size
+        last4percentmean = np.mean(
+            cell_in_img[np.argsort(cell_in_img)[int(array_size * 0.96) :]]
+        ).astype(int)
+
+        # current_cell_info['cell_size'] = cell_size
+        # current_cell_info['cell_integ'] = cell_integ
+        fov_quantify.append(
+            (cell_idx, cell_size, cell_integ, cell_mean, last4percentmean)
+        )
+
+    return fov_quantify
 
 
 def quantify_all_fovs(
@@ -224,25 +274,27 @@ def write_conditions(quantify_csv_file, condition_xlsx_file):
     df = pd.read_csv(quantify_csv_file)
     # get the conditions
     conditions_data = pd.read_excel(condition_xlsx_file)
-    letters = 'abcdefghijklmnop'.upper()
-    
-    df  = df.assign(**dict.fromkeys(["Compound"], np.nan))
-    for item in conditions_data['Destination Well']:
+    letters = "abcdefghijklmnop".upper()
+
+    df = df.assign(**dict.fromkeys(["Compound"], np.nan))
+    for item in conditions_data["Destination Well"]:
         row = letters.index(item[0]) + 1
         column = int(item[1:])
         well_id = f"r{row:02d}c{column:02d}"
-        condition_rows = conditions_data.loc[conditions_data['Destination Well'] == item]
+        condition_rows = conditions_data.loc[
+            conditions_data["Destination Well"] == item
+        ]
         if len(condition_rows):
             try:
                 condition = condition_rows.iloc[0].Compound
-                df.loc[df.well_id == well_id, 'Compound'] = condition
+                df.loc[df.well_id == well_id, "Compound"] = condition
             except:
                 print(item)
                 print(condition_rows)
     # save again the file
     df.to_csv(quantify_csv_file, index=False)
 
-    
+
 def adjust_image(img):
     """Adjust image intensity for better visualization.
     Args:
@@ -359,50 +411,45 @@ def calc_infection(df, df_well_ids, well_id):
         df (pandas DataFrame): pandas dataframe with infected cells indicated.
         df_well_ids (list): available well_ids in df dataframe.
         well_id (str): well id info.
-    
+
     Returns:
         dict: cell_count, infected_cell_count, infection_rate.
     """
     if not well_id in df_well_ids:
-        #print(f"there is no cell detected in {well_id}")
+        # print(f"there is no cell detected in {well_id}")
         # if no cells found, give infection rate as -50
         return {
-            'cell_count': 0,
-            'infected_cell_count': 0,
-            'infection_rate': -50
+            "cell_count": 0,
+            "infected_cell_count": 0,
+            "infection_rate": -50,
         }
     else:
         well_cells = df.loc[df.well_id == well_id]
         cell_count = len(well_cells)
         infected_cell_count = len(well_cells.loc[well_cells.Infected == 1])
-        infection_rate = round(infected_cell_count / cell_count *100, 2)
+        infection_rate = round(infected_cell_count / cell_count * 100, 2)
 
         return {
-            'cell_count': cell_count,
-            'infected_cell_count': infected_cell_count,
-            'infection_rate': infection_rate
+            "cell_count": cell_count,
+            "infected_cell_count": infected_cell_count,
+            "infection_rate": infection_rate,
         }
-    
+
 
 def plate_infection(processed_folder, infection_threshold=3000):
     """Calculate all the infection rate in the plate.
     Args:
         processed_folder (str): the path of processed folder.
         infection_threshold (int): threshold value for cell infection.
-    
+
     Returns:
         dict: cell infection numbers
     """
-    df = pd.read_csv(
-        os.path.join(
-            processed_folder,
-            'quantify_all.csv'
-        )
-    )
+    df = pd.read_csv(os.path.join(processed_folder, "quantify_all.csv"))
     # define if cell is infected
-    df  = df.assign(**dict.fromkeys(["Infected"], 0))
-    df.loc[df.last4percentmean > infection_threshold, 'Infected'] = 1
-    
+    df = df.assign(**dict.fromkeys(["Infected"], 0))
+    df.loc[df.last4percentmean > infection_threshold, "Infected"] = 1
+
     df_well_ids = df.well_id.to_list()
     df_well_ids.sort()
     df_well_ids = set(df_well_ids)
@@ -417,24 +464,30 @@ def plate_infection(processed_folder, infection_threshold=3000):
         for column in range(1, column_number + 1):
             well_id = f"r{row:02d}c{column:02d}"
             infection_info = calc_infection(df, df_well_ids, well_id)
-            cell_count, infected_cell_count, infection_rate = infection_info['cell_count'], infection_info['infected_cell_count'], infection_info['infection_rate']
-            
+            cell_count, infected_cell_count, infection_rate = (
+                infection_info["cell_count"],
+                infection_info["infected_cell_count"],
+                infection_info["infection_rate"],
+            )
+
             cell_counts.append(cell_count)
             infected_cell_counts.append(infected_cell_count)
             infection_rates.append(infection_rate)
     cell_counts = np.array(cell_counts)
     cell_counts = cell_counts.reshape((row_number, column_number))
     infected_cell_counts = np.array(infected_cell_counts)
-    infected_cell_counts = infected_cell_counts.reshape((row_number, column_number))
+    infected_cell_counts = infected_cell_counts.reshape(
+        (row_number, column_number)
+    )
     infection_rates = np.array(infection_rates)
     infection_rates = infection_rates.reshape((row_number, column_number))
-    
+
     return {
-        'row_number': row_number,
-        'column_number': column_number,
-        'cell_counts': cell_counts,
-        'infected_cell_counts': infected_cell_counts,
-        'infection_rates': infection_rates
+        "row_number": row_number,
+        "column_number": column_number,
+        "cell_counts": cell_counts,
+        "infected_cell_counts": infected_cell_counts,
+        "infection_rates": infection_rates,
     }
 
 
@@ -442,54 +495,59 @@ def plate_plots(processed_folder, infection_threshold=3000):
     """Plot cell counts, infected cell counts, infection rates for a plate of processed folder
     Args:
         processed_folder (str): the path of processed folder.
-        infection_threshold (int): threshold value for cell infection.        
+        infection_threshold (int): threshold value for cell infection.
     """
     infection_data = plate_infection(processed_folder, infection_threshold)
     sns.set_theme()
-    data = infection_data['infection_rates']
+    data = infection_data["infection_rates"]
     mask = np.zeros_like(data)
     mask = np.where(data >= 0, mask, True)
-    
-    xticklabels = [str(i) for i in range(1, 1 + infection_data['column_number'])]
-    yticklabels = 'abcdefghijklmnop'[:infection_data['row_number']].upper()
+
+    xticklabels = [
+        str(i) for i in range(1, 1 + infection_data["column_number"])
+    ]
+    yticklabels = "abcdefghijklmnop"[: infection_data["row_number"]].upper()
     yticklabels = list(yticklabels)
     for item in infection_data.keys():
-        if item in ['row_number', 'column_number']:
+        if item in ["row_number", "column_number"]:
             continue
-        legend_label = item.replace('_', ' ')
-        if 'rate' in item:
-            legend_label += ' (%)' 
-            #vmax = 100
-        #else:
-            #vmax=None
+        legend_label = item.replace("_", " ")
+        if "rate" in item:
+            legend_label += " (%)"
+            # vmax = 100
+        # else:
+        # vmax=None
         plt.figure(figsize=(15, 15))
         sns.heatmap(
             infection_data[item],
             vmin=0,
             vmax=None,
             center=0,
-            linewidths=.5,
+            linewidths=0.5,
             square=True,
             xticklabels=xticklabels,
             yticklabels=yticklabels,
             mask=mask,
-            cbar_kws={'label': legend_label, "shrink": .5}
+            cbar_kws={"label": legend_label, "shrink": 0.5},
         )
         plt.yticks(rotation=0)
-        plot_folder = os.path.join(processed_folder, 'plots')
+        plot_folder = os.path.join(processed_folder, "plots")
         os.makedirs(plot_folder, exist_ok=True)
-        plt.savefig(os.path.join(plot_folder, item + '_plate_map.png'), bbox_inches='tight', dpi=100)
-    
-    ## scatter plots
-    df = pd.read_csv(
-        os.path.join(
-            processed_folder,
-            'quantify_all.csv'
+        plt.savefig(
+            os.path.join(plot_folder, item + "_plate_map.png"),
+            bbox_inches="tight",
+            dpi=100,
         )
-    )
+
+    ## scatter plots
+    df = pd.read_csv(os.path.join(processed_folder, "quantify_all.csv"))
     compounds = list(set(df.Compound.to_list()))
     df_compounds = pd.DataFrame
-    calculate_items = ['cell_counts', 'infected_cell_counts', 'infection_rates']
+    calculate_items = [
+        "cell_counts",
+        "infected_cell_counts",
+        "infection_rates",
+    ]
     compounds_infections = []
     for compound in compounds:
         wells_selected = list(set(df.loc[df.Compound == compound].well_id))
@@ -497,28 +555,32 @@ def plate_plots(processed_folder, infection_threshold=3000):
             compound_infection = {}
             row_index = int(well_selected[1:3]) - 1
             column_index = int(well_selected[4:]) - 1
-            compound_infection['well_id'] = well_selected
+            compound_infection["well_id"] = well_selected
             for _, calculate_item in enumerate(calculate_items):
-                compound_infection[calculate_item] = infection_data[calculate_item][row_index][column_index]
-            compound_infection['Compound'] = compound
+                compound_infection[calculate_item] = infection_data[
+                    calculate_item
+                ][row_index][column_index]
+            compound_infection["Compound"] = compound
             compounds_infections.append(compound_infection)
 
     df2 = pd.DataFrame(compounds_infections)
     df2.to_csv(
-        os.path.join(
-            processed_folder,
-            'infection_data.csv'
-        ),
-        index=False
+        os.path.join(processed_folder, "infection_data.csv"), index=False
     )
     sns.set_theme(style="ticks", color_codes=True)
-    
+
     for _, calculate_item in enumerate(calculate_items):
         plt.figure(figsize=(10, 20))
-        sns.catplot(x="Compound", y=calculate_item, kind="box", data=df2, aspect=2)
+        sns.catplot(
+            x="Compound", y=calculate_item, kind="box", data=df2, aspect=2
+        )
         plt.xticks(rotation=45)
-        ylabel = calculate_item.replace('_', ' ')
-        if ylabel == 'infection rates':
-            ylabel = 'infection rates (%)'
+        ylabel = calculate_item.replace("_", " ")
+        if ylabel == "infection rates":
+            ylabel = "infection rates (%)"
         plt.ylabel(ylabel)
-        plt.savefig(os.path.join(plot_folder, calculate_item + '_bbox.png'), bbox_inches='tight', dpi=100)
+        plt.savefig(
+            os.path.join(plot_folder, calculate_item + "_bbox.png"),
+            bbox_inches="tight",
+            dpi=100,
+        )

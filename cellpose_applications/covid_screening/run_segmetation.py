@@ -1,6 +1,9 @@
 import pandas as pd
 from matplotlib import pyplot as plt
-from covid_screening_quantify import quantify_all_fovs, combine_all_quantify
+from cellpose_applications.covid_screening.covid_screening_quantify import (
+    quantify_all_fovs,
+    combine_all_quantify,
+)
 
 if __name__ == "__main__":
     """run image segmentation and quantification"""

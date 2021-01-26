@@ -1,7 +1,11 @@
 cellpose==0.6
 scikit-image
 voluptuous
+imagecodecs
 pandas
 seaborn
 openpyxl
 xlrd
+pathlib
+setuptools
+black
